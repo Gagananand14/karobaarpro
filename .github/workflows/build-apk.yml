@@ -1,0 +1,76 @@
+name: Build APK
+
+on:
+  workflow_dispatch:        # Actions tab se "Run workflow"
+  push:
+    branches: [main]
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      KS_B64: ${{ secrets.KEYSTORE_B64 }}
+      KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install npm packages
+        run: npm install
+
+      - name: Create Android project
+        run: npx cap add android
+
+      - name: Icons, splash, camera permission, print bridge
+        run: |
+          RES=android/app/src/main/res
+          rm -rf $RES/mipmap-anydpi-v26
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp resources/mipmap-$d/ic_launcher.png $RES/mipmap-$d/ic_launcher.png
+            cp resources/mipmap-$d/ic_launcher.png $RES/mipmap-$d/ic_launcher_round.png
+          done
+          find $RES -name 'splash.png' -exec cp resources/splash.png {} \;
+          cp native/MainActivity.java android/app/src/main/java/com/gaganit/karobaarpro/MainActivity.java
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
+
+      - name: Sync web assets and plugins
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KarobaarPro-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Build and sign release APK (only if keystore secrets are set)
+        if: env.KS_B64 != ''
+        working-directory: android
+        run: |
+          ./gradlew assembleRelease
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -v -p 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-pass env:KS_PASS --key-pass env:KEY_PASS --ks-key-alias "$KEY_ALIAS" --out "$GITHUB_WORKSPACE/KarobaarPro-release.apk" "$RUNNER_TEMP/aligned.apk"
+
+      - name: Upload release APK
+        if: env.KS_B64 != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: KarobaarPro-release-apk
+          path: KarobaarPro-release.apk
