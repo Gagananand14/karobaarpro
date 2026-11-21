@@ -1,0 +1,8 @@
+{
+  "appId": "com.gaganit.karobaarpro",
+  "appName": "KarobaarPro",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}
